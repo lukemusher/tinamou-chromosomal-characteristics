@@ -1,0 +1,93 @@
+######bioinformatic pipeline for Musher et al.
+#most of this should be set up to replicate with very little adjustment
+#please let me know if you have any issues ljm357@drexel.edu
+
+#bwa read mapping
+bwa mem -aM -t 12 Cuund34614.ragtag.fasta <path to R1 reads> <path to R2 reads > sampleX-aln.sam; done
+
+samtools view -S -b sampleX.-alnsam > sampleX-aln.bam
+
+samtools sortsampleX-aln.bam -o sampleX.sorted.bam
+
+#generate list of sample names
+ls *sorted.bam | sed 's/-aln.sorted.bam//g' > taxa.list
+
+for i in `cat taxa.list`; do bcftools mpileup -a AD,DP,SP -Ou -f Cuund34614.ragtag.fasta ./"$i".sorted.bam | bcftools call -f GQ,GP -mO z -o "$i".vcf.gz; done
+
+bcftools index *vcf.gz
+
+bcftools merge Ceery21146.vcf.gz Cratr320360.vcf.gz Crnoc59478.vcf.gz Cstr9577.vcf.gz Cuund34614.vcf.gz Ccgol2213.vcf.gz Cvar27099.vcf.gz -Oz -o Crypturellus.cladeA.vcf.gz
+
+bcftools index Crypturellus.cladeA.vcf.gz
+
+#give samples new names in vcf file
+bcftools query -l Crypturellus.cladeA.vcf.gz > names.txt #manually edit text file to include space plus new name after previous names
+
+bcftools reheader -s names.txt --threads 12 -o Crypturellus.cladeA.renamed.vcf.gz Crypturellus.cladeA.vcf.gz
+
+#generate filtered vcf
+VCF_IN=/home/lmusher/Tinamous/cladeA_clean_reads/Crypturellus.cladeA.renamed.vcf.gz
+VCF_OUT=/home/lmusher/Tinamous/cladeA_clean_reads/Crypturellus.cladeA.miss50.vcf.gz
+
+# set filters
+MISS=0.5
+QUAL=30
+MIN_DEPTH=6
+MAX_DEPTH=200
+
+vcftools --gzvcf $VCF_IN --remove-indels  --max-missing $MISS --minQ $QUAL --min-meanDP $MIN_DEPTH --max-meanDP $MAX_DEPTH --minDP $MIN_DEPTH --maxDP $MAX_DEPTH --recode --stdout | bgzip -c > $VCF_OUT
+
+#10kb windows
+mkdir parsed_10kb_vcfs/
+X=$(wc -l 10kb_windows.list | sed 's/ 10kb_windows.list//g')
+seq 1 $X | parallel -j 30 'CHR=$(cut -f 1 10kb_windows.list | head -n {}| tail -n 1); ST=$(cut -f 2 10kb_windows.list | head -n {}| tail -n 1); EN=$(cut -f 3 10kb_windows.list  | head -n {}| tail -n 1); vcftools --gzvcf Crypturellus.cladeA.filtered.taxa.vcf.gz --chr $CHR --from-bp $ST --to-bp $EN --recode --stdout | gzip -c > parsed_10kb_vcfs/"$CHR"."$ST"-"$EN".vcf.gz'
+
+#vcf2phylip
+mkdir 10kb_phylips
+cd 10kb_phylips
+ls ../parsed_10kb_vcfs | parallel -j 12 "python ~/programs/vcf2phylip/vcf2phylip.py -i ../parsed_10kb_vcfs/{} --resolve-IUPAC"
+
+#100kb windows
+mkdir parsed_100kb_vcfs
+X=$(wc -l 100kb_windows.list | sed 's/ 100kb_windows.list//g')
+seq 1 $X | parallel -j 30 'CHR=$(cut -f 1 100kb_windows.list | head -n {}| tail -n 1); ST=$(cut -f 2 100kb_windows.list | head -n {}| tail -n 1); EN=$(cut -f 3 100kb_windows.list  | head -n {}| tail -n 1); vcftools --gzvcf Crypturellus.cladeA.filtered.taxa.vcf.gz --chr $CHR --from-bp $ST --to-bp $EN --recode --stdout | gzip -c > parsed_100kb_vcfs/"$CHR"."$ST"-"$EN".vcf.gz'
+
+#vcf2phylip
+mkdir 100kb_phylips
+cd 100kb_phylips
+ls ../parsed_100kb_vcfs | parallel -j 12 "python ~/programs/vcf2phylip/vcf2phylip.py -i ../parsed_100kb_vcfs/{} --resolve-IUPAC"
+
+#run gene trees in parallel
+ls *phy | parallel -j 7 "iqtree -s {} -M -B 1000 -T 8 -o Cvar27099"
+
+#100kb windows abba baba
+#Assume T1 with cin as p3
+python ~/programs/genomics_general/ABBABABAwindows.py -g Crypturellus.cladeA.filtered.geno.gz -f phased -o ABBABABAwindows.w100k.T1-cinp3.csv -w 100000 -m 100 -s 100000 -P2 A Cstr9577 Ceery21146 -P1 B Cratr320360 -P3 C Ccgol2213 -O D Cuund34614 --minData 0.5 --writeFailedWindows -T 20
+
+#Assume T2 with P2 as cinnamomeus
+python ~/programs/genomics_general/ABBABABAwindows.py -g Crypturellus.cladeA.filtered.geno.gz -f phased -o ABBABABAwindows.w100k.T2-cinP2.csv -w 100000 -m 100 -s 100000 -P2 A Cstr9577 Ceery21146 -P3 B Cratr320360 -P1 C Ccgol2213  -O D Cuund34614  --minData 0.5 --writeFailedWindows -T 20
+
+#200kb windows abba baba
+#Assume T1 with cin as p3
+python ~/programs/genomics_general/ABBABABAwindows.py -g Crypturellus.cladeA.filtered.geno.gz -f phased -o ABBABABAwindows.w200k.T1-cinp3.csv -w 200000 -m 100 -s 200000 -P2 A Cstr9577 Ceery21146 -P1 B Cratr320360 -P3 C Ccgol2213 -O D Cuund34614 --minData 0.5 --writeFailedWindows -T 20
+
+#Assume T2 with P2 as cinnamomeus
+python ~/programs/genomics_general/ABBABABAwindows.py -g Crypturellus.cladeA.filtered.geno.gz -f phased -o ABBABABAwindows.w200k.T2-cinP2.csv -w 200000 -m 100 -s 200000 -P2 A Cstr9577 Ceery21146 -P3 B Cratr320360 -P1 C Ccgol2213  -O D Cuund34614  --minData 0.5 --writeFailedWindows -T 20
+
+###Get depths
+cat taxa.list | parallel -j 11 "bcftools query -f '%CHROM\t%POS\t%INFO/DP\n' {}.vcf.gz | grep '^ChrZ_RagTag' > {}_chrz_depth.txt; done
+
+#get missing data
+cat taxa.list| parallel -j 11 "bcftools query -f '%CHROM\t%POS\t[%GT\t]\n' {}.vcf.gz | grep '^ChrZ_RagTag' > {}_chrz_genotypes.txt"
+
+#bpp
+
+#get 10,000 random windows
+
+find 10kb_phylip/ -type f -print0 | shuf -z -n 10000 | xargs -0 cp -t bpp/10kb_phylip_random10k/
+
+#generate loci file from random 10k windows for bpp
+> 10kloci.txt; find 10kb_phylip_random10k/ -name "*phy" | while read -r filepath; do cat $filepath >> 10kloci.txt; echo "" >> 10kloci.txt; done
+
+#Filter loci for 4 taxa in main clade (reduce comp time in bpp) (excluding outgroup C. variegatus plus C. undulatus)
+grep -v 'noc' 10kloci.txt | grep -v 'und' | grep -v 'var' | sed 's/^7/4/g' > 10kloci.4taxa.txt
