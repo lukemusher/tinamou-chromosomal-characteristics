@@ -29,8 +29,8 @@
       finetune =  1
 
          print = 1 0 0 0   * MCMC samples, locusrate, heredityscalars, Genetrees
-        burnin = 11000
+        burnin = 22000
       sampfreq = 2
-       nsample = 100000
+       nsample = 200000
        threads = 10 42 1
 
